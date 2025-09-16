@@ -6,19 +6,19 @@ from PIL import Image, ImageDraw, ImageFont
 # ---- Einstellungen ----
 ICS = "https://outlook.office365.com/owa/calendar/543f71192bc94e368be74654f86827f4@espas.ch/f401e8b7dee04a53a30450f5f60ac9fa8638957689972678873/calendar.ics"
 W, H = 800, 480            # 7.5" ePaper
-DAYS = 5                   # 5 Spalten
-START_TODAY = True         # ab heute
+DAYS = 5                   # Mo–Fr
+SHIFT_WEEKEND = True       # Sa/So → nächste Woche zeigen
 TZ = pytz.timezone("Europe/Zurich")
 
-# Layout (enger)
+# Kompaktes Layout
 MARGIN_X = 12
 TOP = 10
 COL_GAP = 6
 HEADER_H = 24
 MAX_EVENTS_PER_COL = 18
-LH = 16                    # Zeilenhoehe Text
+LH = 16  # Zeilenhöhe Text
 
-# Schriften (kleiner)
+# Schriften
 try:
     FONT_HDR  = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 17)
     FONT_TIME = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 14)
@@ -28,7 +28,12 @@ except:
 
 DAYS_DE = ["Mo","Di","Mi","Do","Fr","Sa","So"]
 
-def day_key(dt): return dt.astimezone(TZ).date()
+def monday_of_week(d):
+    mo = d - timedelta(days=d.weekday())  # Montag = 0
+    if SHIFT_WEEKEND and d.weekday() >= 5:  # Sa/So → nächste Woche
+        mo += timedelta(days=7)
+    return mo
+
 def fmt_day(date_obj): return f"{DAYS_DE[date_obj.weekday()]} {date_obj.day:02}.{date_obj.month:02}."
 def fmt_time(dt): return dt.astimezone(TZ).strftime("%H:%M") if dt else ""
 
@@ -41,24 +46,29 @@ def wrap_by_width(draw, text, font, max_w):
         if piece: out.append(piece)
     return out
 
-def collect_events(ics_text, start_day, days_count):
+def collect_events_window(ics_text, start_day, days_count):
     cal = Calendar(ics_text)
     start_dt = datetime.combine(start_day, datetime.min.time(), tzinfo=TZ)
     end_dt = start_dt + timedelta(days=days_count)
-    buckets = { (start_day + timedelta(days=i)): [] for i in range(days_count) }
+    # Buckets für Mo–Fr
+    days = [(start_day + timedelta(days=i)) for i in range(days_count)]
+    buckets = { d: [] for d in days }
+
     for e in cal.events:
         begin = e.begin.datetime if e.begin else None
         end = e.end.datetime if e.end else None
         if not begin: continue
         if (end or begin) < start_dt or begin >= end_dt: continue
-        dkey = day_key(begin)
+        dkey = begin.astimezone(TZ).date()
         if dkey in buckets: buckets[dkey].append(e)
+
+    # Sortierung je Tag
     for k in buckets:
         buckets[k].sort(key=lambda x: x.begin if x.begin else datetime.max.replace(tzinfo=timezone.utc))
     return buckets
 
 def main():
-    # ICS holen
+    # ICS laden
     try:
         txt = requests.get(ICS, timeout=20).text
     except Exception as ex:
@@ -68,8 +78,8 @@ def main():
         img.save("docs/ics.png", optimize=True); return
 
     today_local = datetime.now(TZ).date()
-    start_day = today_local if START_TODAY else today_local + timedelta(days=1)
-    buckets = collect_events(txt, start_day, DAYS)
+    start_day = monday_of_week(today_local)           # immer Wochenstart Montag
+    buckets = collect_events_window(txt, start_day, DAYS)
 
     inner_w = W - 2*MARGIN_X
     col_w = math.floor((inner_w - (DAYS-1)*COL_GAP) / DAYS)
@@ -77,18 +87,18 @@ def main():
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
 
-    # optionale Trennlinien
+    # Trennlinien
     for i in range(DAYS-1):
         x = MARGIN_X + (i+1)*col_w + i*COL_GAP + COL_GAP//2
         d.line([(x, TOP), (x, H - 6)], fill="black", width=1)
 
-    # Spalten rendern
+    # Spalten Mo–Fr
     for ci in range(DAYS):
         day = start_day + timedelta(days=ci)
         x = MARGIN_X + ci*(col_w + COL_GAP)
         y = TOP
 
-        # Kopf ohne globalen Titel
+        # Tageskopf (kein globaler Titel)
         d.text((x, y), fmt_day(day), font=FONT_HDR, fill="black")
         y += HEADER_H
 
@@ -102,8 +112,10 @@ def main():
             if count >= MAX_EVENTS_PER_COL or y > H - LH - 6: break
             start = e.begin.datetime if e.begin else None
             end = e.end.datetime if e.end else None
+            # Ganztag erkennen (ics-Event Flag)
+            allday = getattr(e, "all_day", False)
 
-            time_line = fmt_time(start) + ("–"+fmt_time(end) if end else "")
+            time_line = "Ganztags" if allday else (fmt_time(start) + ("–"+fmt_time(end) if end else ""))
             d.text((x, y), time_line, font=FONT_TIME, fill="black"); y += LH
 
             title = (e.name or "Ohne Titel").strip()
