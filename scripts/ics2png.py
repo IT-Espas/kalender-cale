@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from PIL import Image, ImageDraw, ImageFont
 
 # ---- Einstellungen ----
-ICS = "https://outlook.office365.com/owa/calendar/543f71192bc94e368be74654f86827f4@espas.ch/f401e8b7dee04a53a30450f5f60ac9fa8638957689972678873/calendar.ics"
+ICS = "h"
 W, H = 800, 480            # 7.5" ePaper
 DAYS = 5                   # Mo–Fr
 SHIFT_WEEKEND = True       # Sa/So → nächste Woche zeigen
